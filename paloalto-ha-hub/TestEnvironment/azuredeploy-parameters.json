@@ -1,0 +1,86 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "adminUsername": {
+            "value": "gomez5"
+        },
+        "adminPassword": {
+            "value": "abr4c4d4br4!"
+        },
+        "vnetName": {
+            "value": "hubvnet"
+        },
+        "vnetAddressPrefix": {
+            "value": "10.1.0.0/16"
+        },
+        "BastionSettings":{
+            "value": {                 
+                  "subnet":
+                      {
+                          "name": "bastion-subnet",
+                          "addressPrefix": "10.1.4.0/24"
+                      },
+                  "vmName":"bastionvm"
+          }
+        },  
+        "SpokeSettings":{
+            "value": {
+                    "vnet": 
+                        {
+                            "name": "spokevnet",
+                            "addressPrefix": "10.11.0.0/16"
+                        }
+                    ,
+                    "subnet":
+                        {
+                            "name": "websubnet",
+                            "addressPrefix": "10.11.1.0/24"
+                        }
+                    ,
+                    "vmName":"spokewebvm01"
+            }
+        },  
+        "Spoke2Settings":{
+            "value": {
+                    "vnet": 
+                        {
+                            "name": "spoke2vnet",
+                            "addressPrefix": "10.12.0.0/16"
+                        }
+                    ,
+                    "subnet":
+                        {
+                            "name": "rdpsubnet",
+                            "addressPrefix": "10.12.1.0/24"
+                        }
+                    ,
+                    "vmName":"spokerdpvm01"
+            }
+        },      
+        "OnPremSettings":{
+            "value":{
+                "location":"South Central US",                
+                "vnet": 
+                    {
+                        "name": "onpremvnet",
+                        "addressPrefix": "10.0.0.0/16",
+                        "gatewaySubnetAddressPrefix": "10.0.10.0/24"
+                    }
+                ,
+                "subnet":[
+                    {
+                        "name": "publicsubnet",
+                        "addressPrefix": "10.0.1.0/24",
+                        "vmName": "jumpboxvm"
+                    },
+                    {
+                        "name": "WebSubnet",
+                        "addressPrefix": "10.0.2.0/24",
+                        "vmName": "onpremwebvm"
+                    }
+                ]
+            }
+        }            
+    }
+  }

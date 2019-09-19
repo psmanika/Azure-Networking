@@ -1,0 +1,789 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {   
+    "vnetName": {
+      "type": "string",
+      "defaultValue": "HubVNet",
+      "metadata": {
+        "description": "VNet name"
+      }
+    },
+    "vnetAddressPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/16",
+      "metadata": {
+        "description": "Address prefix"
+      }
+    },
+    "managementSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.0.0/24",
+      "metadata": {
+        "description": "PaloAlto Management Subnet Prefix"
+      }
+    },
+    "managementSubnetName": {
+      "type": "string",
+      "defaultValue": "PaloAlto-Management",
+      "metadata": {
+        "description": "PaloAlto Management Subnet for eth0"
+      }
+    },
+    "untrustedSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.1.0/24",
+      "metadata": {
+        "description": "Palo Alto Untrusted Subnet Prefix"
+      }
+    },
+    "untrustedSubnetName": {
+      "type": "string",
+      "defaultValue": "PaloAlto-Untrusted",
+      "metadata": {
+        "description": "Palo Alto Untrusted Subnet for eth1"
+      }
+    },
+    "trustedSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.2.0/24",
+      "metadata": {
+        "description": "Palo Alto Trusted Subnet"
+      }
+    },
+    "trustedSubnetName": {
+      "type": "string",
+      "defaultValue": "Trusted",
+      "metadata": {
+        "description": "Palo Alto Untrusted Subnet for eth2"
+      }
+    },  
+    "backhaulSubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.3.0/24",
+      "metadata": {
+        "description": "Backhaul subnet"
+      }
+    },
+    "backhaulSubnetName": {
+      "type": "string",
+      "defaultValue": "Backhaul",
+      "metadata": {
+        "description": "Backhaul Subnet for eth3"
+      }
+    },   
+    "gatewaySubnetPrefix": {
+      "type": "string",
+      "defaultValue": "10.0.4.0/24",
+      "metadata": {
+        "description": "GatewaySubnet Prefix"
+      }
+    },
+    "untrustedLoadBalancerSku": {
+			"type": "string",
+			"allowedValues": [
+				"Standard",
+				"Basic"
+			],
+			"metadata": {
+				"description": "LB Standard or Basic"
+			},
+			"defaultValue": "Standard"
+    },
+    "trustedLoadBalancerSku": {
+			"type": "string",
+			"allowedValues": [
+				"Standard",
+				"Basic"
+			],
+			"metadata": {
+				"description": "LB Standard or Basic"
+			},
+			"defaultValue": "Standard"
+    },  
+    "asFaultDomainCount": {
+	    "type": "int",
+	    "defaultValue": 3
+    },
+    "asUpdateDomainCount": {
+      "type": "int",
+      "defaultValue": 20
+    },
+    "vmSize": {
+			"type": "string",
+			"allowedValues": [
+				"Standard_D3",
+				"Standard_D4",
+				"Standard_D3_v2",
+				"Standard_D4_v2",
+				"Standard_D5_v2",
+				"Standard_D14_v2",
+				"Standard_A4"
+			],
+			"metadata": {
+				"description": "Azure VM size for PaloAlto VM-Series"
+			},
+			"defaultValue": "Standard_D3"
+    },
+    "imageSku": {
+			"type": "string",
+			"allowedValues": [
+				"byol",
+				"bundle1",
+				"bundle2"
+			],
+			"metadata": {
+				"description": "byol = Bring Your Own License; bundle1 = Bundle 1 PAYG (Hourly); bundle2 = Bundle 2 PAYG (Hourly)"
+			},
+			"defaultValue": "byol"
+    },    			
+		"adminUsername": {
+			"type": "string",
+			"metadata": {
+				"description": "Username of the administrator account of VM-Series"
+			}
+		},
+		"adminPassword": {
+			"type": "securestring",
+			"defaultValue": "",
+			"metadata": {
+				"description": "Password for the administrator account of VM-Series"
+			}
+    },
+    "dnsNameForPublicIP": {
+      "type": "string",
+      "defaultValue": "paloaltofirewallpublicip",
+      "metadata": {
+        "description": "Used for the Public IP of the Untrusted LB Front End and the Management IPs"
+      }
+    },
+    "validManagementSourceIPRange": {
+      "type": "string",
+      "defaultValue": "0.0.0.0/0",
+      "metadata": {
+        "description": "Valid source IP range for Management NSG"
+      }
+    }
+  }, 
+  "variables":
+    {      
+      "vmNamePrefix" : "paloaltovm",
+      "fwpublicIPName": "[concat(variables('vmNamePrefix'), '-fwMgmtPublicIP-')]",
+      "fwlbPublicIPName" : "paloAltoExtLBIP",
+      "publicIPAddressType" : "Static",      
+      "untrustedLbName" : "untrusted-lb",     
+      "publicIPAddressID": "[resourceId('Microsoft.Network/publicIPAddresses',variables('fwlbPublicIPName'))]",
+      "untrustedLbID": "[resourceId('Microsoft.Network/loadBalancers',variables('untrustedLbName'))]",
+      "frontEndIPConfigID": "[concat(variables('untrustedLbID'),'/frontendIPConfigurations/LoadBalancerFrontEnd')]",
+      "untrustedlbPoolID": "[concat(variables('untrustedLbID'),'/backendAddressPools/Firewall-Layer')]",
+      "untrustedlbProbeID": "[concat(variables('untrustedLbID'),'/probes/tcpProbe')]",
+      "trustedLbName" : "trusted-backhaul-lb",
+      "trustedLbID": "[resourceId('Microsoft.Network/loadBalancers',variables('trustedLbName'))]",     
+      "numberOfInstances": 2,
+      "managementNicNamePrefix" : "eth0",
+      "managementSubnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('managementSubnetName'))]",
+      "untrustedNicNamePrefix" : "eth1",
+      "untrustedSubnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('untrustedSubnetName'))]",
+      "trustedNicNamePrefix" : "eth2",
+      "trustedSubnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('trustedSubnetName'))]",      
+      "backhaulNicNamePrefix" : "eth3",
+      "backhaulSubnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('backhaulSubnetName'))]",      
+      "imagePublisher": "paloaltonetworks", 
+      "imageOffer": "vmseries1",
+      "vmAvsetName":"PaloAltoAvailabilitySet"      ,
+      "IPAddressPrefix" : "[substring(parameters('vnetAddressPrefix'), 0, 4)]"
+    }
+  ,
+  "resources": [
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "AllowAll-Subnet",
+      "location": "[resourceGroup().location]",
+      "properties": {
+          "securityRules": [{
+              "name": "Allow-Outside-From-IP",
+              "properties": {
+                  "description": "Rule",
+                  "protocol": "*",
+                  "sourcePortRange": "*",
+                  "destinationPortRange": "*",
+                  "sourceAddressPrefix": "[parameters('validManagementSourceIPRange')]",
+                  "destinationAddressPrefix": "*",
+                  "access": "Allow",
+                  "priority": 100,
+                  "direction": "Inbound"
+              }
+          },
+          {
+              "name": "Allow-Intra",
+              "properties": {
+                  "description": "Allow intra network traffic",
+                  "protocol": "*",
+                  "sourcePortRange": "*",
+                  "destinationPortRange": "*",
+                  "sourceAddressPrefix": "[concat(variables('IPAddressPrefix'), '.0.0/16')]",
+                  "destinationAddressPrefix": "*",
+                  "access": "Allow",
+                  "priority": 101,
+                  "direction": "Inbound"
+
+              }
+          },
+          {
+              "name": "Default-Deny",
+              "properties": {
+                  "description": "Default-Deny if we don't match Allow rule",
+                  "protocol": "*",
+                  "sourcePortRange": "*",
+                  "destinationPortRange": "*",
+                  "sourceAddressPrefix": "*",
+                  "destinationAddressPrefix": "*",
+                  "access": "Deny",
+                  "priority": 200,
+                  "direction": "Inbound"
+              }
+          }]
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "name": "AllowManagement-Subnet",
+      "location": "[resourceGroup().location]",
+      "properties": {
+          "securityRules": [
+          {
+              "name": "AllowHTTPS-Inbound",
+              "properties": {
+                  "description": "Rule",
+                  "protocol": "Tcp",
+                  "sourcePortRange": "*",
+                  "destinationPortRange": "443",
+                  "sourceAddressPrefix": "[parameters('validManagementSourceIPRange')]",
+                  "destinationAddressPrefix": "*",
+                  "access": "Allow",
+                  "priority": 100,
+                  "direction": "Inbound"
+              }
+          },
+          {
+            "name": "AllowSSH-Inbound",
+            "properties": {
+                "description": "Rule",
+                "protocol": "Tcp",
+                "sourcePortRange": "*",
+                "destinationPortRange": "22",
+                "sourceAddressPrefix": "[parameters('validManagementSourceIPRange')]",
+                "destinationAddressPrefix": "*",
+                "access": "Allow",
+                "priority": 110,
+                "direction": "Inbound"
+            }
+          },
+          {
+              "name": "Default-Deny",
+              "properties": {
+                  "description": "Default-Deny if we don't match Allow rule",
+                  "protocol": "*",
+                  "sourcePortRange": "*",
+                  "destinationPortRange": "*",
+                  "sourceAddressPrefix": "*",
+                  "destinationAddressPrefix": "*",
+                  "access": "Deny",
+                  "priority": 200,
+                  "direction": "Inbound"
+              }
+          }]
+      }
+    },
+    {
+      "apiVersion": "2015-06-15",
+      "type": "Microsoft.Network/virtualNetworks",
+      "name": "[parameters('vnetName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkSecurityGroups/', 'AllowAll-Subnet')]",
+        "[concat('Microsoft.Network/networkSecurityGroups/', 'AllowManagement-Subnet')]"
+      ],
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('vnetAddressPrefix')]"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "[parameters('managementSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('managementSubnetPrefix')]",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'AllowManagement-Subnet')]"
+              }
+            }
+          },
+          {
+            "name": "[parameters('untrustedSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('untrustedSubnetPrefix')]",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', 'AllowAll-Subnet')]"
+              }
+            }
+          },
+          {
+            "name": "[parameters('trustedSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('trustedSubnetPrefix')]"
+            }
+          }, 
+          {
+            "name": "[parameters('backhaulSubnetName')]",
+            "properties": {
+              "addressPrefix": "[parameters('backhaulSubnetPrefix')]"
+            }
+          },         
+          {
+            "name": "GatewaySubnet",
+            "properties": {
+              "addressPrefix": "[parameters('gatewaySubnetPrefix')]"
+            }
+          }
+        ]
+      }
+    },    
+    {
+      "comments": "Availability Set for PAN VMSeries",
+      "type": "Microsoft.Compute/availabilitySets",
+      "name": "[variables('vmAvsetName')]",
+      "apiVersion": "2017-03-30",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "platformFaultDomainCount": "[parameters('asFaultDomainCount')]",
+        "platformUpdateDomainCount": "[parameters('asUpdateDomainCount')]"
+      },
+      "sku": {
+        "name": "Aligned"
+      }
+    },
+    {
+      "comments": "Public IP for Untrusted Azure Load Balancer FrontEnd",
+      "apiVersion": "2017-08-01",
+      "type": "Microsoft.Network/publicIPAddresses",
+      "name": "[variables('fwlbPublicIPName')]",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "[parameters('untrustedLoadBalancerSku')]"
+      },
+      "properties": {
+          "publicIPAllocationMethod": "[variables('publicIPAddressType')]",
+          "dnsSettings": {
+              "domainNameLabel": "[parameters('dnsNameForPublicIP')]"
+          }
+
+      }
+    },
+    {
+      "comments": "Public IPs for eth0 Management Interfaces",
+      "apiVersion": "2017-08-01",
+      "type": "Microsoft.Network/publicIPAddresses",      
+      "name": "[concat(variables('fwpublicIPName'), copyindex(1))]",    
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "[parameters('untrustedLoadBalancerSku')]"
+      },
+      "copy": {
+        "name": "e0PublicIPLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "properties": {
+          "publicIPAllocationMethod": "[variables('publicIPAddressType')]",
+          "dnsSettings": {
+              "domainNameLabel": "[concat(parameters('dnsNameForPublicIP'), '-management-', copyindex(1))]"
+          }
+      }
+    },       
+    {
+      "comments": "Management NICs",
+      "apiVersion": "2015-05-01-preview",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[concat(variables('vmNamePrefix'), copyindex(1), '-',variables('managementNicNamePrefix'))]",      
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "e0NicLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', parameters('vnetName'))]",
+        "[concat('Microsoft.Network/publicIPAddresses/', variables('fwpublicIPName'), copyindex(1))]"        
+      ],
+      "properties": {
+	      "enableIPForwarding": true,
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', concat(variables('fwpublicIPName'), copyindex(1)))]"
+              },
+              "subnet": {
+                "id": "[variables('managementSubnetRef')]"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "comments": "Untrusted Azure Load Balancer",
+      "apiVersion": "2017-08-01",
+      "name": "[variables('untrustedLbName')]",
+      "type": "Microsoft.Network/loadBalancers",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [        
+        "[variables('publicIPAddressID')]"
+      ],
+      "sku":
+      {
+          "name": "[parameters('untrustedLoadBalancerSku')]"                          
+      },
+      "properties": {
+        "frontendIPConfigurations": [
+          {
+            "name": "LoadBalancerFrontEnd",
+            "properties": {
+              "publicIPAddress": {
+                "id": "[variables('publicIPAddressID')]"
+              }
+            }
+          }
+        ],
+        "backendAddressPools": [
+          {
+            "name": "Firewall-Layer"
+          }
+        ],       
+        "loadBalancingRules": [
+          {
+            "name": "lbrule",
+            "properties": {
+              "frontendIPConfiguration": {
+                "id": "[variables('frontEndIPConfigID')]"
+              },
+              "backendAddressPool": {
+                "id": "[variables('untrustedlbPoolID')]"
+              },
+              "protocol": "Tcp",
+              "frontendPort": 80,
+              "backendPort": 80,
+              "enableFloatingIP": false,
+              "idleTimeoutInMinutes": 5,
+              "probe": {
+                "id": "[variables('untrustedlbProbeID')]"
+              }
+            }
+          }
+        ],
+        "probes": [
+          {
+            "name": "tcpProbe",
+            "properties": {
+              "protocol": "Tcp",
+              "port": 443,
+              "intervalInSeconds": 5,
+              "numberOfProbes": 2
+            }
+          }
+        ]
+      }
+    },
+    {
+      "comments": "Untrusted NICs",
+      "apiVersion": "2015-05-01-preview",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[concat(variables('vmNamePrefix'), copyindex(1), '-',variables('untrustedNicNamePrefix'))]",
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "e1NicLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', parameters('vnetName'))]",
+        "[concat('Microsoft.Network/loadBalancers/', variables('untrustedLbName'))]"
+      ],
+      "properties": {
+	"enableIPForwarding": true,
+        "ipConfigurations": [
+          {
+            "name": "ipconfig",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('untrustedSubnetRef')]"
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[concat(variables('untrustedLbID'), '/backendAddressPools/Firewall-Layer')]"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },   
+    { 
+      "comments": "Trusted Load Balancer",
+			"apiVersion": "2017-08-01",
+			"type": "Microsoft.Network/loadBalancers",
+			"name": "[variables('trustedLbName')]",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', parameters('vnetName'))]"        
+      ],
+      "sku":
+            {
+                "name": "[parameters('trustedLoadBalancerSku')]"                          
+            },
+			"properties": {
+				"frontendIPConfigurations": [
+					{
+						"name": "FrontendTrusted",
+						"properties": {
+							"subnet": {
+                "id": "[variables('trustedSubnetRef')]"                
+              },
+              "privateIPAllocationMethod": "Dynamic"
+						}
+          },
+          {
+						"name": "FrontendBackhaul",
+						"properties": {
+							"subnet": {
+                "id": "[variables('backhaulSubnetRef')]"                
+              },
+              "privateIPAllocationMethod": "Dynamic"
+						}
+					}
+
+				],
+				"backendAddressPools": [
+					{
+						"name": "Firewall-Layer-Private"
+          },
+          {
+						"name": "Firewall-Layer-VPN"
+          }
+				],
+				"loadBalancingRules": [
+					{
+            "name": "lbruletrusted",
+						"properties": {
+							"frontendIPConfiguration": {
+								"id": "[concat(variables('trustedLbID'), '/frontendIpConfigurations/FrontendTrusted')]"
+							},
+							"backendAddressPool": {
+								"id": "[concat(variables('trustedLbID'), '/backendAddressPools/Firewall-Layer-Private')]"
+							},
+							"probe": {
+								"id": "[concat(variables('trustedLbID'), '/probes/lbprobe')]"
+							},
+							"protocol": "[if(equals(parameters('trustedLoadBalancerSku'), 'Standard'), 'All', 'Tcp')]",
+							"frontendPort": "[if(equals(parameters('trustedLoadBalancerSku'), 'Standard'), 0, 80)]",
+							"backendPort": "[if(equals(parameters('trustedLoadBalancerSku'), 'Standard'), 0, 80)]",
+							"enableFloatingIP": false,
+							"idleTimeoutInMinutes": 4,
+							"loadDistribution": "SourceIPProtocol"
+						}						
+          },
+          {
+            "name": "lbrulebackhaul",
+						"properties": {
+							"frontendIPConfiguration": {
+								"id": "[concat(variables('trustedLbID'), '/frontendIpConfigurations/FrontendBackhaul')]"
+							},
+							"backendAddressPool": {
+								"id": "[concat(variables('trustedLbID'), '/backendAddressPools/Firewall-Layer-VPN')]"
+							},
+							"probe": {
+								"id": "[concat(variables('trustedLbID'), '/probes/lbprobe')]"
+							},
+							"protocol": "[if(equals(parameters('trustedLoadBalancerSku'), 'Standard'), 'All', 'Tcp')]",
+							"frontendPort": "[if(equals(parameters('trustedLoadBalancerSku'), 'Standard'), 0, 80)]",
+							"backendPort": "[if(equals(parameters('trustedLoadBalancerSku'), 'Standard'), 0, 80)]",
+							"enableFloatingIP": false,
+							"idleTimeoutInMinutes": 4,
+							"loadDistribution": "SourceIPProtocol"
+						}						
+					}
+				],
+				"probes": [
+					{
+						"properties": {
+							"protocol": "Tcp",
+							"port": 443,
+							"intervalInSeconds": 15,
+							"numberOfProbes": 2
+						},
+						"name": "lbprobe"
+					}
+				]
+			}
+    },
+    {
+      "comments": "Trusted NICs",
+      "apiVersion": "2015-05-01-preview",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[concat(variables('vmNamePrefix'), copyindex(1), '-',variables('trustedNicNamePrefix'))]",            
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "e2NicLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', parameters('vnetName'))]",
+        "[concat('Microsoft.Network/loadBalancers/', variables('trustedLbName'))]"
+      ],
+      "properties": {
+	"enableIPForwarding": true,
+        "ipConfigurations": [
+          {
+            "name": "ipconfig",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('trustedSubnetRef')]"
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[concat(variables('trustedLbID'), '/backendAddressPools/Firewall-Layer-Private')]"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }, 
+    {
+      "comments": "Backhaul NICs",
+      "apiVersion": "2015-05-01-preview",
+      "type": "Microsoft.Network/networkInterfaces",
+      "name": "[concat(variables('vmNamePrefix'), copyindex(1), '-',variables('backhaulNicNamePrefix'))]",            
+      "location": "[resourceGroup().location]",
+      "copy": {
+        "name": "e3NicLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "dependsOn": [
+        "[concat('Microsoft.Network/virtualNetworks/', parameters('vnetName'))]",
+        "[concat('Microsoft.Network/loadBalancers/', variables('trustedLbName'))]"
+      ],
+      "properties": {
+	"enableIPForwarding": true,
+        "ipConfigurations": [
+          {
+            "name": "ipconfig",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[variables('backhaulSubnetRef')]"
+              },
+              "loadBalancerBackendAddressPools": [
+                {
+                  "id": "[concat(variables('trustedLbID'), '/backendAddressPools/Firewall-Layer-VPN')]"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }, 
+    {
+      "comments" : "PaloAlto VM Series",
+      "type": "Microsoft.Compute/virtualMachines",
+      "copy": {
+        "name": "VMLoop",
+        "count": "[variables('numberOfInstances')]"
+      },
+      "name": "[concat(variables('vmNamePrefix'), copyindex(1))]",      			
+			"location": "[resourceGroup().location]",
+      "apiVersion": "2017-03-30",
+      "dependsOn": [
+        "[concat('Microsoft.Network/networkInterfaces/', variables('vmNamePrefix'), copyindex(1), '-',variables('untrustedNicNamePrefix'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('vmNamePrefix'), copyindex(1), '-',variables('managementNicNamePrefix'))]",
+        "[concat('Microsoft.Network/networkInterfaces/', variables('vmNamePrefix'), copyindex(1), '-',variables('trustedNicNamePrefix'))]",     
+        "[concat('Microsoft.Network/networkInterfaces/', variables('vmNamePrefix'), copyindex(1), '-',variables('backhaulNicNamePrefix'))]",        
+        "[concat('Microsoft.Compute/availabilitySets/', variables('vmAvsetName'))]"        
+      ],
+			"plan": {
+				"name": "[parameters('imageSku')]",
+				"product": "[variables('imageOffer')]",
+				"publisher": "[variables('imagePublisher')]"
+			},
+			"properties": {
+        "availabilitySet": {
+					"id": "[resourceId('Microsoft.Compute/availabilitySets',variables('vmAvsetName'))]"
+				},
+				"hardwareProfile": {
+					"vmSize": "[parameters('vmSize')]"
+				},
+				"osProfile": {
+					"computerName": "[concat(variables('vmNamePrefix'), copyindex(1))]",
+					"adminUsername": "[parameters('adminUsername')]",
+					"adminPassword": "[parameters('adminPassword')]"
+				},
+				"storageProfile": {
+					"imageReference": {
+						"publisher": "[variables('imagePublisher')]",
+						"offer": "[variables('imageOffer')]",
+						"sku": "[parameters('imageSku')]",
+						"version": "latest"
+					},					
+					"osDisk": {
+            "name": "[concat(variables('vmNamePrefix'), copyindex(1),'-osdisk')]", 
+            "createOption": "FromImage",
+						"managedDisk": {
+              "storageAccountType": "Standard_LRS"
+            },
+						"caching": "ReadWrite"
+					
+					}
+				},
+				"networkProfile": {
+					"networkInterfaces": [
+						{
+							"id": "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('vmNamePrefix'), copyindex(1), '-',variables('managementNicNamePrefix')))]",
+							"properties": {
+								"primary": true
+							}
+						},
+						{              
+							"id": "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('vmNamePrefix'), copyindex(1), '-',variables('untrustedNicNamePrefix')))]",
+							"properties": {
+								"primary": false
+							}
+						},
+						{
+							"id": "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('vmNamePrefix'), copyindex(1), '-',variables('trustedNicNamePrefix')))]",
+							"properties": {
+								"primary": false
+							}
+            }
+            ,
+						{
+							"id": "[resourceId('Microsoft.Network/networkInterfaces', concat(variables('vmNamePrefix'), copyindex(1), '-',variables('backhaulNicNamePrefix')))]",
+							"properties": {
+								"primary": false
+							}
+            }
+					]
+
+				}
+
+			}
+
+		}
+    
+		
+  ]
+}
